@@ -1,0 +1,32 @@
+=== lease reclaim (kill -9 recovery)  LEASEJOBS_LAB_SABOTAGE=no_reclaim  expect=red got=red  [OK]
+$ pytest tests/test_recovery.py::test_kill9_worker_job_is_reclaimed_with_history_intact
+E       AssertionError: timed out after 15s waiting for another worker to reclaim and finish the job; saw {'state': 'RUNNING', 'lease_owner': 'w1', 'fencing_token': 1, 'expired_s_ago': Decimal('13.6')}
+FAILED tests/test_recovery.py::test_kill9_worker_job_is_reclaimed_with_history_intact
+1 failed in 16.86s
+
+=== lease reclaim (kill -9 recovery)  LEASEJOBS_LAB_SABOTAGE=<none>  expect=green got=green  [OK]
+$ pytest tests/test_recovery.py::test_kill9_worker_job_is_reclaimed_with_history_intact
+1 passed in 6.01s
+
+=== fencing token (in-process stale write)  LEASEJOBS_LAB_SABOTAGE=no_fencing  expect=red got=red  [OK]
+$ pytest tests/test_recovery.py::test_stale_holder_cannot_heartbeat_or_finish
+E       AssertionError: stale worker overwrote the result: {'by': 'w-a'}
+E       assert {'by': 'w-a'} == {'by': 'w-b'}
+FAILED tests/test_recovery.py::test_stale_holder_cannot_heartbeat_or_finish
+1 failed in 0.67s
+
+=== fencing token (in-process stale write)  LEASEJOBS_LAB_SABOTAGE=<none>  expect=green got=green  [OK]
+$ pytest tests/test_recovery.py::test_stale_holder_cannot_heartbeat_or_finish
+1 passed in 0.75s
+
+=== fencing token (SIGSTOP + revive, downstream)  LEASEJOBS_LAB_SABOTAGE=no_fencing  expect=red got=red  [OK]
+$ pytest tests/test_recovery.py::test_sigstop_worker_revives_and_is_fenced_out
+E       AssertionError: accepted writes: [{'token': None, 'at': 1795636020.589, 'job_id': 1, 'attempt': 2, 'worker': 'w2', 'amount': 1}, {'token': None, 'at': 1795636020.778, 'job_id': 1, 'attempt': 1, 'worker': 'w1', 'amount': 1}]
+E       assert ['w2', 'w1'] == ['w2']
+FAILED tests/test_recovery.py::test_sigstop_worker_revives_and_is_fenced_out
+1 failed in 5.20s
+
+=== fencing token (SIGSTOP + revive, downstream)  LEASEJOBS_LAB_SABOTAGE=<none>  expect=green got=green  [OK]
+$ pytest tests/test_recovery.py::test_sigstop_worker_revives_and_is_fenced_out
+1 passed in 4.82s
+

@@ -48,3 +48,29 @@ def client(conn, dsn):
     from leasejobs.api import create_app
     with TestClient(create_app(dsn)) as c:
         yield c
+
+
+TEST_INTEGRATION_PORT = 8918  # inside this project's 8910-8919 range; the demo uses 8915
+
+
+@pytest.fixture(scope="session")
+def integration_server():
+    import threading
+
+    from leasejobs.integration import LEDGER, serve
+    srv = serve(TEST_INTEGRATION_PORT)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    os.environ["LEASEJOBS_INTEGRATION_URL"] = f"http://127.0.0.1:{TEST_INTEGRATION_PORT}"
+    yield LEDGER
+    srv.shutdown()
+
+
+@pytest.fixture()
+def ledger(integration_server):
+    integration_server.reset()
+    return integration_server
+
+
+# Fast leases for process-level tests: expire 1.5 s after the last heartbeat.
+FAST = {"LEASEJOBS_LEASE_TTL_S": "1.5", "LEASEJOBS_HEARTBEAT_S": "0.3", "LEASEJOBS_POLL_S": "0.1"}

@@ -8,6 +8,10 @@ import statistics
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
+import httpx
+
+from .config import sabotage
+
 
 class JobError(Exception):
     retryable: ClassVar[bool] = True
@@ -19,6 +23,11 @@ class RetryableError(JobError):
 
 class TerminalError(JobError):
     """Retrying cannot help (bad input, permanent 4xx)."""
+    retryable = False
+
+
+class FencedOut(JobError):
+    """The downstream refused our fencing token: a newer lease holder exists."""
     retryable = False
 
 
@@ -120,6 +129,50 @@ class Tally(Job):
     def run(self, ctx):
         ctx.conn.execute("INSERT INTO tally (job_id, worker_id) VALUES (%s, %s)", (ctx.job["id"], ctx.worker_id))
         return {"tallied_by": ctx.worker_id}
+
+
+class CallIntegration(Job):
+    """Do some work, then write the outcome to an external integration.
+
+    The write carries our fencing token. The integration refuses a token older
+    than one it has already seen, which is what makes a revived stale worker
+    harmless downstream, not just in our own database.
+    """
+    type_name = "call_integration"
+
+    @classmethod
+    def validate(cls, payload):
+        name = payload.get("integration", "ledger-api")
+        if not isinstance(name, str) or not name.replace("-", "").isalnum() or len(name) > 40:
+            raise ValueError("integration must be a short name like 'ledger-api'")
+        _num(payload, "work_s", 0.2, 0, 300)
+        _num(payload, "amount", 1, -1e9, 1e9)
+        return {"integration": name, **payload}
+
+    def integration(self):
+        return self.payload.get("integration", "ledger-api")
+
+    # @learn:call-integration
+    def run(self, ctx):
+        ctx.sleep(float(self.payload.get("work_s", 0.2)))
+        key = str(self.payload.get("key") or f"job-{ctx.job['id']}")
+        headers = {} if "no_fencing" in sabotage() else {"X-Fencing-Token": str(ctx.fencing_token)}
+        body = {"job_id": ctx.job["id"], "attempt": ctx.attempt_no, "worker": ctx.worker_id,
+                "amount": self.payload.get("amount", 1)}
+        try:
+            r = httpx.post(f"{ctx.integration_url}/{self.integration()}/ledger/{key}", json=body,
+                           headers=headers, timeout=5.0)
+        except httpx.HTTPError as exc:
+            raise RetryableError(f"integration unreachable: {exc.__class__.__name__}") from exc
+        if r.status_code == 409:
+            raise FencedOut(f"integration refused token {ctx.fencing_token}: {r.text}")
+        if r.status_code >= 500:
+            raise RetryableError(f"integration {r.status_code}: {r.text[:200]}")
+        if r.status_code >= 400:
+            raise TerminalError(f"integration {r.status_code}: {r.text[:200]}")
+        return {"ledger_key": key, "accepted_token": r.json().get("token"), "worker": ctx.worker_id,
+                "attempt": ctx.attempt_no}
+    # @learn:end call-integration
 
 
 def build(job_type: str, payload: dict[str, Any]) -> Job:

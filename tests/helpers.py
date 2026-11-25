@@ -63,11 +63,13 @@ def worker(worker_id: str, *extra: str, env: dict | None = None, log: Path | Non
     return Proc(["-m", "leasejobs.worker", "--id", worker_id, *extra], env=env, log=log)
 
 
-def wait_until(pred, timeout: float = 20.0, every: float = 0.05, msg: str = "condition"):
+def wait_until(pred, timeout: float = 20.0, every: float = 0.05, msg: str = "condition", describe=None):
+    """Poll pred() until truthy. On timeout, describe() (if given) says what we saw instead."""
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         v = pred()
         if v:
             return v
         time.sleep(every)
-    raise AssertionError(f"timed out after {timeout}s waiting for {msg}")
+    seen = f"; saw {describe()}" if describe else ""
+    raise AssertionError(f"timed out after {timeout}s waiting for {msg}{seen}")
