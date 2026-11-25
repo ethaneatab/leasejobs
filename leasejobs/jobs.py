@@ -113,6 +113,15 @@ class Flaky(Job):
         return {"succeeded_on_attempt": ctx.attempt_no}
 
 
+class Tally(Job):
+    """Writes one row to `tally` per execution: a countable side effect."""
+    type_name = "tally"
+
+    def run(self, ctx):
+        ctx.conn.execute("INSERT INTO tally (job_id, worker_id) VALUES (%s, %s)", (ctx.job["id"], ctx.worker_id))
+        return {"tallied_by": ctx.worker_id}
+
+
 def build(job_type: str, payload: dict[str, Any]) -> Job:
     cls = Job.registry.get(job_type)
     if cls is None:

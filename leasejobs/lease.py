@@ -1,8 +1,7 @@
 """LeaseManager: how a worker takes a job, starts it, and finishes it.
 
-Step 1 version: a compare-and-set claim. A worker reads a candidate and then
-flips it PENDING -> LEASED only if it is still PENDING, so two workers can
-never both win the same row; the loser just tries the next one.
+A lease is (lease_owner, lease_expires_at) on the job row, set by the
+database clock so workers never have to agree on wall time.
 """
 from __future__ import annotations
 
@@ -11,25 +10,45 @@ from typing import Any
 import psycopg
 
 from . import store
+from .config import sabotage
 from .db import Jsonb
-from .states import State
+from .states import State, check
 
 
 class LeaseManager:
-    def __init__(self, conn: psycopg.Connection, worker_id: str):
+    def __init__(self, conn: psycopg.Connection, worker_id: str, ttl_s: float = 4.0):
         self.conn = conn
         self.worker_id = worker_id
+        self.ttl_s = ttl_s
 
+    # @learn:claim
     def claim(self) -> dict | None:
-        for cand in self.conn.execute(
-            "SELECT id FROM jobs WHERE state = 'PENDING' AND run_at <= now() "
-            "ORDER BY priority DESC, run_at, id LIMIT 5"
-        ).fetchall():
-            row = store.transition(self.conn, cand["id"], State.PENDING, State.LEASED, actor=self.worker_id,
-                                   kind="claim", set_={"lease_owner": self.worker_id})
+        """Take the best runnable job in one statement, skipping rows other workers hold.
+
+        The inner SELECT ... FOR UPDATE SKIP LOCKED is the whole trick: a row
+        another worker is in the middle of claiming is invisible to us instead of
+        making us wait for it, so N workers spread over N different rows.
+        """
+        check(State.PENDING, State.LEASED)
+        lock = "FOR UPDATE" if "no_skip_locked" in sabotage() else "FOR UPDATE SKIP LOCKED"
+        with self.conn.transaction():
+            row = self.conn.execute(
+                f"""
+                UPDATE jobs SET state = 'LEASED', lease_owner = %(me)s, leased_at = now(),
+                       lease_expires_at = now() + make_interval(secs => %(ttl)s)
+                WHERE id = (SELECT id FROM jobs
+                            WHERE state = 'PENDING' AND run_at <= now()
+                            ORDER BY priority DESC, run_at, id
+                            LIMIT 1 {lock})
+                RETURNING *""",
+                {"me": self.worker_id, "ttl": self.ttl_s},
+            ).fetchone()
             if row is not None:
-                return row
-        return None
+                store.add_event(self.conn, row["id"], "claim", self.worker_id, frm="PENDING", to="LEASED",
+                                detail={"lease_owner": self.worker_id,
+                                        "lease_expires_at": row["lease_expires_at"].isoformat()})
+        return row
+    # @learn:end claim
 
     def _mine(self) -> tuple[str, tuple]:
         return "lease_owner = %s", (self.worker_id,)
@@ -49,7 +68,8 @@ class LeaseManager:
         row = store.transition(
             self.conn, job["id"], State.RUNNING, to, actor=self.worker_id, kind="finish",
             set_={"result": Jsonb(result) if result is not None else None, "last_error": error,
-                  "finished_at": store.Raw("now()"), "lease_owner": None},
+                  "finished_at": store.Raw("now()"), "lease_owner": None,
+                  "lease_expires_at": None},
             guard=self._mine(), detail={"outcome": outcome, **({"error": error} if error else {})},
         )
         if row is not None:

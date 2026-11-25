@@ -22,8 +22,9 @@ class AttemptTimeout(Exception):
 class JobContext:
     """What a running job can see: its attempt, and a check() for deadlines."""
 
-    def __init__(self, job: dict, worker_id: str, deadline: float):
+    def __init__(self, job: dict, worker_id: str, deadline: float, conn=None):
         self.job = job
+        self.conn = conn
         self.attempt_no = job["attempts"]
         self.worker_id = worker_id
         self.deadline = deadline
@@ -44,7 +45,7 @@ class Worker:
         self.cfg = settings()
         self.worker_id = worker_id or f"{socket.gethostname().split('.')[0]}-{os.getpid()}"
         self.conn = connect(dsn)
-        self.leases = LeaseManager(self.conn, self.worker_id)
+        self.leases = LeaseManager(self.conn, self.worker_id, self.cfg.lease_ttl_s)
         self.log = JsonLog("worker", worker=self.worker_id)
         self.stop = threading.Event()
 
@@ -60,7 +61,7 @@ class Worker:
         job = self.leases.start(job)
         if job is None:
             return
-        ctx = JobContext(job, self.worker_id, time.monotonic() + job["timeout_s"])
+        ctx = JobContext(job, self.worker_id, time.monotonic() + job["timeout_s"], self.conn)
         try:
             result = jobtypes.build(job["type"], job["payload"]).run(ctx)
         except Exception as exc:  # step 1: any failure is final
@@ -70,18 +71,26 @@ class Worker:
         self.leases.finish(job, State.SUCCEEDED, result=result, outcome="succeeded")
         self.log.info("succeeded", job_id=job["id"])
 
-    def run_forever(self) -> None:
+    def run_forever(self, drain_after_s: float | None = None) -> None:
+        """Loop until stopped; with drain_after_s, exit after that long with no work."""
         self.log.info("worker started")
+        idle_since = time.monotonic()
         while not self.stop.is_set():
-            if not self.run_once():
+            if self.run_once():
+                idle_since = time.monotonic()
+            elif drain_after_s is not None and time.monotonic() - idle_since > drain_after_s:
+                self.log.info("drained, exiting")
+                return
+            else:
                 self.stop.wait(self.cfg.poll_s)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--id")
+    ap.add_argument("--drain", type=float, default=None, help="exit after N idle seconds")
     args = ap.parse_args()
-    Worker(args.id).run_forever()
+    Worker(args.id).run_forever(args.drain)
 
 
 if __name__ == "__main__":
