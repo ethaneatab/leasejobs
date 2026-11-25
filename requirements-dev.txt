@@ -1,0 +1,4 @@
+-r requirements.txt
+hypothesis==6.170.17
+pytest==9.2.0
+pytest-timeout==2.4.0

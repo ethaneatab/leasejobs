@@ -1,0 +1,32 @@
+# leasejobs infrastructure. The Python processes (API, scheduler, workers,
+# fake integration) run on the host from .venv so that "kill a worker" means a
+# real PID on this machine. Containers here are only state and metrics.
+# Ports: Postgres 54311. Always run as: docker-compose -p leasejobs ...
+name: leasejobs
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    mem_limit: 320m
+    environment:
+      POSTGRES_USER: leasejobs
+      POSTGRES_PASSWORD: leasejobs-dev # throwaway local database, not a secret
+      POSTGRES_DB: leasejobs
+    command:
+      - postgres
+      - -c
+      - shared_buffers=48MB
+      - -c
+      - max_connections=80
+      - -c
+      - work_mem=2MB
+    ports: ["54311:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leasejobs -d leasejobs"]
+      interval: 2s
+      retries: 40
+
+volumes:
+  pgdata:
