@@ -1,0 +1,12 @@
+[
+  {"part": "p0-overview", "title": "这个项目在解决什么：一个任务的一生", "stage": null, "chapter": "09-learn-page"},
+  {"part": "p1-submit", "title": "提交任务和显式状态机", "stage": "submit", "chapter": "01-state-machine"},
+  {"part": "p2-heap", "title": "延迟任务进调度堆", "stage": "heap", "chapter": "04-scheduler-heap"},
+  {"part": "p3-claim", "title": "认领就是拿租约", "stage": "claim", "chapter": "02-lease-claim"},
+  {"part": "p4-ratelimit", "title": "按集成限速的共享令牌桶", "stage": "token", "chapter": "05-rate-limit"},
+  {"part": "p5-heartbeat", "title": "心跳、卡死、租约过期", "stage": "heartbeat,stall,expire", "chapter": "03-expiry-and-fencing"},
+  {"part": "p6-fencing", "title": "回收和 fencing token", "stage": "reclaim,stale", "chapter": "03-expiry-and-fencing"},
+  {"part": "p7-cache", "title": "成功以后：LRU 结果缓存", "stage": "done,cache", "chapter": "06-lru-cache"},
+  {"part": "p8-failures", "title": "重试、退避和尝试历史", "stage": null, "chapter": "07-retries-timeouts"},
+  {"part": "p9-ops", "title": "杀掉一个 worker，看它怎么恢复", "stage": null, "chapter": "08-observability"}
+]

@@ -1,0 +1,46 @@
+[
+  {"id": "s01", "part": "p0-overview", "text": "这一段先说这个项目在解决什么。后台任务最怕的不是失败，而是失败以后没人知道任务归谁。", "action": "open_learn", "highlight": ".learn-head h1"},
+  {"id": "s02", "part": "p0-overview", "text": "这个页面上的每一步都在读数据库里真实的行，不是前端的动画。亮起来的顺序，就是事情发生的顺序。", "action": "none", "highlight": ".learn-head p"},
+  {"id": "s03", "part": "p0-overview", "text": "下面我点一次提交样例，从头看一个任务的一生。", "action": "none", "highlight": "[data-testid=\"submit-sample\"]", "shape": "circle"},
+
+  {"id": "s04", "part": "p1-submit", "text": "这一段讲提交和状态机。先圈住这个按钮，停一下，然后点下去。", "action": "click_submit", "highlight": "[data-testid=\"submit-sample\"]", "shape": "circle"},
+  {"id": "s05", "part": "p1-submit", "text": "看第一步。任务进库的时候状态是 SCHEDULED，因为样例要延迟两秒再跑。", "action": "wait_stage", "arg": "submit", "highlight": "[data-key=\"submit\"]"},
+  {"id": "s06", "part": "p1-submit", "text": "为什么要盯这个状态？因为每一次改状态都要经过同一张边表，Python 里查一遍，数据库的触发器再查一遍。下一步，看它怎么进调度堆。", "action": "none", "highlight": "[data-stage=\"submit\"] .status"},
+
+  {"id": "s07", "part": "p2-heap", "text": "这一段讲调度堆。看这里，堆的大小，和这个任务的到期时间。", "action": "wait_stage", "arg": "heap", "highlight": "[data-key=\"heap\"]"},
+  {"id": "s08", "part": "p2-heap", "text": "调度器不轮询，它睡到堆顶到期，或者被数据库的通知叫醒。到点以后，它只做一件事，把任务改成待执行，交给 worker。", "action": "none", "highlight": "[data-stage=\"heap\"] .stage-top time"},
+
+  {"id": "s09", "part": "p3-claim", "text": "这一段讲认领。先看持有者，和 fencing token，现在是一。", "action": "wait_stage", "arg": "claim", "highlight": "[data-key=\"claim\"]"},
+  {"id": "s10", "part": "p3-claim", "text": "认领是一条语句，里面用了 SKIP LOCKED，别人正在锁的行直接跳过。每认领一次，token 就加一，记住这个一，后面要用。", "action": "none", "highlight": ".lease-now"},
+  {"id": "s11", "part": "p3-claim", "text": "想看代码，就点看源码。录像里只展示链接，它指向这次构建的提交，和具体的行号。", "action": "show_src", "arg": "claim", "highlight": "[data-stage=\"claim\"] a.src-link", "shape": "circle"},
+
+  {"id": "s12", "part": "p4-ratelimit", "text": "这一段讲限速。看剩下的令牌数，五个里还剩四个。", "action": "wait_stage", "arg": "token", "highlight": "[data-key=\"token\"]"},
+  {"id": "s13", "part": "p4-ratelimit", "text": "这个桶放在数据库里，所有 worker 共用一行，所以三个 worker 加起来也不会超过配置的速率。拿不到令牌的任务不等，直接交回调度器。", "action": "none", "highlight": "[data-stage=\"token\"] .stage-top h3"},
+
+  {"id": "s14", "part": "p5-heartbeat", "text": "这一段讲心跳和卡死。先看续租，租约的到期时间每秒往后推一次。", "action": "wait_stage", "arg": "heartbeat", "highlight": "[data-key=\"heartbeat\"]"},
+  {"id": "s15", "part": "p5-heartbeat", "text": "然后这里，持有它的 worker 给自己发了 SIGSTOP，整个进程冻住六秒，心跳也停了。这就像一次很长的垃圾回收。", "action": "wait_stage", "arg": "stall", "highlight": "[data-key=\"stall\"]"},
+  {"id": "s16", "part": "p5-heartbeat", "text": "心跳停了，租约就会过期。看这一行，状态从运行中回到待执行，回收它的是另一个 worker。", "action": "wait_stage", "arg": "expire", "highlight": "[data-key=\"expire\"]"},
+  {"id": "s17", "part": "p5-heartbeat", "text": "点开这一步，看真实的数据。", "action": "expand", "arg": "expire", "highlight": "[data-testid=\"expand-expire\"]", "shape": "circle"},
+  {"id": "s18", "part": "p5-heartbeat", "text": "最关键的是这个值，过期多久以后被收回。只有几十毫秒，说明回收靠的是活着的 worker 在每次认领前顺手检查。", "action": "none", "highlight": "[data-json=\"expire\"]", "text_match": "\"overdue_ms\""},
+
+  {"id": "s19", "part": "p6-fencing", "text": "这一段讲 fencing token。看这里，token 从一变成二，持有者换人了。", "action": "wait_stage", "arg": "reclaim", "highlight": "[data-key=\"reclaim\"]"},
+  {"id": "s20", "part": "p6-fencing", "text": "现在冻住的那个 worker 醒了。它不知道自己已经被判死，接着去写结果。看这一行，它带的是一，现在是二，被拒。", "action": "wait_stage", "arg": "stale", "highlight": "[data-key=\"stale\"]"},
+  {"id": "s21", "part": "p6-fencing", "text": "再点开看看，它一共被拒了几次。", "action": "expand", "arg": "stale", "highlight": "[data-testid=\"expand-stale\"]", "shape": "circle"},
+  {"id": "s22", "part": "p6-fencing", "text": "两次。一次是心跳，一次是写结果。说明不是哪一个函数特别小心，而是每一次写入都带着 token。", "action": "none", "highlight": "[data-json=\"stale\"]", "text_match": "\"all_rejected\""},
+
+  {"id": "s23", "part": "p7-cache", "text": "这一段讲成功以后。看这里，成功是第二个 worker 写的，结果也是它的。", "action": "wait_stage", "arg": "done", "highlight": "[data-key=\"done\"]"},
+  {"id": "s24", "part": "p7-cache", "text": "成功的结果不会再变，所以可以放心缓存。现在点查询结果。", "action": "click_query", "highlight": "[data-testid=\"query-result\"]", "shape": "circle"},
+  {"id": "s25", "part": "p7-cache", "text": "看这个响应头，直接命中。因为成功的时候数据库发了通知，接口进程已经把它放进了自己写的 LRU 里。", "action": "wait_stage", "arg": "cache", "highlight": "[data-testid=\"query-answer\"]"},
+  {"id": "s26", "part": "p7-cache", "text": "十一步都亮了。每一步的讲解视频都在这个按钮后面。", "action": "click_video", "arg": "cache", "highlight": "[data-testid=\"video-cache\"]", "shape": "circle"},
+
+  {"id": "s27", "part": "p8-failures", "text": "这一段讲失败和重试。切到控制台，选一个会先失败一次的任务。", "action": "dash_pick_flaky", "highlight": "[data-testid=\"job-type\"]"},
+  {"id": "s28", "part": "p8-failures", "text": "提交。", "action": "dash_submit", "highlight": "[data-testid=\"job-submit\"]", "shape": "circle"},
+  {"id": "s29", "part": "p8-failures", "text": "看尝试历史。第一次失败，第二次成功。失败的那次没有在 worker 里等，而是退避一段时间，交回调度器。", "action": "wait_attempts", "highlight": "[data-testid=\"attempts\"]", "text_match": "failed"},
+  {"id": "s30", "part": "p8-failures", "text": "时间线里这一行就是重试被排进调度器的那一刻。下一步，看 worker 死了会怎样。", "action": "none", "highlight": "[data-testid=\"lease-timeline\"]", "text_match": "retry_scheduled"},
+
+  {"id": "s31", "part": "p9-ops", "text": "这一段讲运维和恢复。先提交一个要跑几秒的任务，让某个 worker 拿着它。", "action": "dash_long_job", "highlight": "[data-testid=\"job-submit\"]", "shape": "circle"},
+  {"id": "s32", "part": "p9-ops", "text": "圈住持有它的那个 worker，点杀掉。页面不会按名字杀进程，而是请它对自己的进程号发信号。", "action": "kill_holder", "highlight": "[data-testid=\"workers\"] .busy button", "shape": "circle"},
+  {"id": "s33", "part": "p9-ops", "text": "它变灰了。几秒后租约过期，任务会被别人回收，监工进程也会拉起它的下一代。", "action": "wait_dead", "highlight": "[data-testid=\"workers\"] .worker.dead"},
+  {"id": "s34", "part": "p9-ops", "text": "看时间线，租约过期以后，token 加一，换了一个 worker 跑完。", "action": "wait_reclaimed", "highlight": "[data-testid=\"lease-timeline\"]", "text_match": "lease_expired"},
+  {"id": "s35", "part": "p9-ops", "text": "最后总结一下。租约决定谁在干活，fencing token 让迟到的写入失败，调度堆和令牌桶让等待不占 worker。每一条都有一个关掉就变红的测试。", "action": "none", "highlight": "[data-testid=\"lease-timeline\"]", "text_match": "token 2"}
+]

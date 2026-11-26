@@ -1,0 +1,61 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: leasejobs
+          POSTGRES_PASSWORD: leasejobs-dev # throwaway CI database
+          POSTGRES_DB: leasejobs
+        ports: ["54311:5432"]
+        options: >-
+          --health-cmd "pg_isready -U leasejobs" --health-interval 2s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - uses: actions/setup-node@v4
+        with: {node-version: "24"}
+      - name: python deps
+        run: python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+      - name: unit + integration tests (real Postgres, real worker processes)
+        run: .venv/bin/python -m pytest
+      - name: failing controls (each protection off must go red)
+        run: ./scripts/failing_controls.sh
+      - name: anchors
+        run: node scripts/check_anchors.mjs
+      - name: problem video sources
+        run: node scripts/build_problem_videos.mjs > /dev/null
+      - name: frontend build
+        run: cd frontend && npm ci && npm run build
+
+  e2e:
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - uses: actions/setup-node@v4
+        with: {node-version: "24"}
+      - name: install
+        run: |
+          python -m venv .venv && .venv/bin/pip install -r requirements.txt
+          npm ci && npx playwright install --with-deps chromium
+          cd frontend && npm ci
+      - name: start the whole stack (compose + processes + vite)
+        run: DC="docker compose" PYBIN=python ./scripts/demo.sh
+      - name: playwright
+        run: npx playwright test -c e2e
+      - name: logs on failure
+        if: failure()
+        run: tail -n 80 var/*.log
+      - name: stop
+        if: always()
+        run: DC="docker compose" ./scripts/stop.sh
