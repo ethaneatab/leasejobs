@@ -1,0 +1,35 @@
+groups:
+  - name: leasejobs
+    rules:
+      - alert: LeasejobsStalledJobs
+        # Each reason names the broken part; see docs/troubleshooting.md.
+        expr: sum by (reason) (leasejobs_stalled_jobs) > 0
+        for: 30s
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $value }} job(s) stalled: {{ $labels.reason }}"
+      - alert: LeasejobsBacklogAging
+        expr: leasejobs_oldest_runnable_age_seconds > 60
+        for: 2m
+        labels: {severity: warn}
+        annotations:
+          summary: "oldest runnable job has waited {{ $value | humanizeDuration }}"
+      - alert: LeasejobsHighFailureRate
+        expr: |
+          sum(rate(leasejobs_attempts_total{outcome!="succeeded"}[5m]))
+            / clamp_min(sum(rate(leasejobs_attempts_total[5m])), 1e-9) > 0.2
+        for: 5m
+        labels: {severity: warn}
+        annotations:
+          summary: "more than 20% of attempts fail"
+      - alert: LeasejobsNoWorkers
+        expr: leasejobs_workers_alive == 0
+        for: 30s
+        labels: {severity: page}
+        annotations:
+          summary: "no worker has heartbeated in the last 3 seconds"
+      - alert: LeasejobsStaleWritesSpike
+        expr: sum(increase(leasejobs_stale_writes_rejected_total[10m])) > 10
+        labels: {severity: info}
+        annotations:
+          summary: "many fenced writes bounced: leases are expiring under live workers (TTL too short? long pauses?)"

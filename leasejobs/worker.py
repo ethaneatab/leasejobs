@@ -9,7 +9,6 @@ write. One job at a time per process; run more processes for more throughput.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import random
 import signal
@@ -17,10 +16,9 @@ import socket
 import subprocess
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import jobs as jobtypes
-from . import store
+from . import metrics, store
 from .config import settings
 from .db import connect
 from .lease import LeaseLost, LeaseManager
@@ -127,6 +125,7 @@ class Worker:
                     if row["cancel_requested"]:
                         ctx.cancelled.set()
             except LeaseLost as exc:
+                metrics.LEASE_LOST.inc()
                 ctx.lease_lost.set()
                 self.log.warn("lease lost", job_id=ctx.job["id"], error=str(exc))
             except Exception as exc:  # a DB blip must not kill the heartbeat thread
@@ -137,6 +136,7 @@ class Worker:
     def run_once(self) -> bool:
         self.last_loop = time.monotonic()
         for r in self.leases.reap_expired():
+            metrics.RECLAIMED.inc()
             self.log.warn("reclaimed expired lease", job_id=r["id"], to=r["state"])
         job = self.leases.claim()
         if job is None:
@@ -182,6 +182,7 @@ class Worker:
             "SELECT count(*) AS n FROM jobs WHERE state = 'SCHEDULED' AND deferrals > 0 "
             "AND payload->>'integration' = %s", (name,)).fetchone()["n"]
         wait = g.wait_s + random.uniform(0, (waiting + 1) / g.refill_per_s)
+        metrics.RATE_LIMITED.labels(name).inc()
         self.leases.defer(job, wait, {"integration": name, "tokens_left": g.tokens_left, "queued_behind": waiting})
         self.log.info("rate limited, deferred", job_id=job["id"], integration=name, wait_s=round(wait, 3))
         return False
@@ -195,6 +196,7 @@ class Worker:
             return
         ctx = JobContext(job, self, time.monotonic() + job["timeout_s"])
         self.current = ctx
+        t0 = time.monotonic()
         try:
             self._failpoint(job, "after_start")
             try:
@@ -220,6 +222,7 @@ class Worker:
                 self.log.info("succeeded", job_id=job["id"], fencing_token=job["fencing_token"])
         finally:
             self.current = None
+            metrics.ATTEMPT_SECONDS.labels(job["type"]).observe(time.monotonic() - t0)
 
     # @learn:hard-timeout
     def run_with_deadline(self, job: dict, ctx: JobContext) -> dict:
@@ -300,51 +303,37 @@ class Worker:
 
 
 # ---- health / admin HTTP --------------------------------------------------------
-def health_server(worker: Worker, port: int) -> ThreadingHTTPServer:
-    class H(BaseHTTPRequestHandler):
-        def log_message(self, *a):
-            pass
+def health_server(worker: Worker, port: int):
+    """/healthz = the process answers (liveness). /readyz = DB reachable and the
+    loop turned recently (readiness). /metrics. POST /admin/kill and
+    /admin/freeze?seconds=N act on this process's own PID only."""
+    from .health import serve_health
 
-        def _send(self, code, obj, ctype="application/json"):
-            data = obj if isinstance(obj, bytes) else json.dumps(obj).encode()
-            self.send_response(code)
-            self.send_header("content-type", ctype)
-            self.send_header("content-length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+    def info():
+        return {"worker": worker.worker_id, "pid": os.getpid(),
+                "busy_job": worker.current.job["id"] if worker.current else None}
 
-        def do_GET(self):
-            if self.path == "/healthz":  # liveness: the process answers
-                return self._send(200, {"status": "alive", "worker": worker.worker_id, "pid": os.getpid()})
-            if self.path == "/readyz":  # readiness: DB reachable and the loop is turning
-                stale = time.monotonic() - worker.last_loop
-                try:
-                    with connect(worker.dsn, connect_timeout=2) as c:
-                        c.execute("SELECT 1")
-                except Exception as exc:
-                    return self._send(503, {"status": "not ready", "error": str(exc)})
-                busy = worker.current is not None
-                if not busy and stale > 10:
-                    return self._send(503, {"status": "not ready", "error": f"loop idle {stale:.1f}s"})
-                return self._send(200, {"status": "ready", "busy": busy})
-            return self._send(404, {"error": "not found"})
+    def ready():
+        try:
+            with connect(worker.dsn, connect_timeout=2) as c:
+                c.execute("SELECT 1")
+        except Exception:
+            return False
+        return worker.current is not None or time.monotonic() - worker.last_loop < 10
 
-        def do_POST(self):
-            if self.path == "/admin/kill":
-                self._send(202, {"killing": os.getpid()})
-                threading.Timer(0.1, os.kill, (os.getpid(), signal.SIGKILL)).start()
-                return
-            if self.path.startswith("/admin/freeze"):
-                secs = float(self.path.partition("seconds=")[2] or 6)
-                self._send(202, {"freezing": os.getpid(), "seconds": secs})
-                threading.Timer(0.1, freeze_self, (secs,)).start()
-                return
-            return self._send(404, {"error": "not found"})
+    def admin(h) -> bool:
+        if h.path == "/admin/kill":
+            h.send(202, {"killing": os.getpid()})
+            threading.Timer(0.1, os.kill, (os.getpid(), signal.SIGKILL)).start()
+            return True
+        if h.path.startswith("/admin/freeze"):
+            secs = float(h.path.partition("seconds=")[2] or 6)
+            h.send(202, {"freezing": os.getpid(), "seconds": secs})
+            threading.Timer(0.1, freeze_self, (secs,)).start()
+            return True
+        return False
 
-    srv = ThreadingHTTPServer(("127.0.0.1", port), H)
-    srv.daemon_threads = True
-    threading.Thread(target=srv.serve_forever, name="health", daemon=True).start()
-    return srv
+    return serve_health(port, info, ready, admin)
 
 
 def main() -> None:

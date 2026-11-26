@@ -19,7 +19,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import store
+from . import metrics, store
 from .db import Jsonb, connect
 from .heap import IndexedMinHeap
 from .logs import JsonLog
@@ -105,6 +105,8 @@ class Scheduler:
         row = store.transition(self.conn, job_id, State.SCHEDULED, State.PENDING, actor=self.id, kind="due",
                                guard=("run_at <= to_timestamp(%s)", (now,)),
                                detail={"run_at": _ts(float(cur["t"])), "late_ms": round((now - float(cur["t"])) * 1000)})
+        if row is not None:
+            metrics.RELEASED.inc()
         return row
     # @learn:end release
 
@@ -133,6 +135,7 @@ class Scheduler:
                     (s["owner"], s["job_type"], Jsonb(s["payload"]), s["max_attempts"], s["timeout_s"],
                      s["id"], slot)).fetchone()
                 if row:
+                    metrics.FIRED.inc()
                     created.append(row["id"])
                     store.add_event(self.conn, row["id"], "submit", self.id, to="PENDING",
                                     detail={"schedule": s["name"], "scheduled_for": slot.isoformat(),
@@ -148,6 +151,7 @@ class Scheduler:
     # @learn:end fire
 
     def snapshot(self) -> None:
+        metrics.HEAP_SIZE.set(len(self.heap))
         top = [{"key": f"{k}:{i}", "due": _ts(p), "in_s": round(p - self.now(), 2)}
                for (k, i), p in self.heap.smallest(8)]
         self.conn.execute(

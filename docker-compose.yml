@@ -1,7 +1,7 @@
 # leasejobs infrastructure. The Python processes (API, scheduler, workers,
 # fake integration) run on the host from .venv so that "kill a worker" means a
 # real PID on this machine. Containers here are only state and metrics.
-# Ports: Postgres 54311. Always run as: docker-compose -p leasejobs ...
+# Ports: Postgres 54311, Prometheus 9211. Always run as: docker-compose -p leasejobs ...
 name: leasejobs
 
 services:
@@ -27,6 +27,20 @@ services:
       test: ["CMD-SHELL", "pg_isready -U leasejobs -d leasejobs"]
       interval: 2s
       retries: 40
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    mem_limit: 192m
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+      - --web.listen-address=:9090
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["9211:9090"]
 
 volumes:
   pgdata:

@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
+import httpx
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -19,6 +21,9 @@ from . import store
 from .cron import Cron
 from .schedules import step_fn
 from .cache import LRUCache
+from . import metrics
+from .metrics import QueueCollector
+from .ratelimit import RateLimiter
 from .config import settings
 from .db import Jsonb, connect
 from .logs import JsonLog
@@ -228,6 +233,46 @@ def create_app(dsn: str | None = None) -> FastAPI:
         response.headers["X-Cache"] = "MISS"
         return view
     # @learn:end result-endpoint
+
+    registry = CollectorRegistry()
+    registry.register(QueueCollector(pool, settings().lease_ttl_s, cache))
+
+    @app.get("/metrics")
+    def prom_metrics():
+        return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
+
+    @app.get("/stalled")
+    def stalled_jobs(_: str = Depends(owner), conn=Depends(db)):
+        return metrics.stalled(conn, settings().lease_ttl_s)
+
+    @app.get("/workers")
+    def list_workers(_: str = Depends(owner), conn=Depends(db)):
+        return conn.execute(
+            """SELECT *, extract(epoch FROM now() - last_seen) AS seen_s_ago,
+                      (status = 'up' AND last_seen > now() - interval '3 seconds') AS alive
+               FROM workers ORDER BY worker_id""").fetchall()
+
+    # @learn:kill-endpoint
+    @app.post("/workers/{worker_id}/kill", status_code=202)
+    def kill_worker(worker_id: str, _: str = Depends(owner), conn=Depends(db)):
+        """Ask one worker to SIGKILL itself (its own PID; we never signal by name)."""
+        w = conn.execute("SELECT * FROM workers WHERE worker_id = %s", (worker_id,)).fetchone()
+        if w is None or w["port"] is None:
+            raise HTTPException(404, f"worker {worker_id} not found or has no admin port")
+        try:
+            r = httpx.post(f"http://127.0.0.1:{w['port']}/admin/kill", timeout=2)
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, f"worker {worker_id} did not answer: {exc.__class__.__name__}")
+        conn.execute("UPDATE workers SET status = 'killed' WHERE worker_id = %s", (worker_id,))
+        if w["current_job"]:
+            store.add_event(conn, w["current_job"], "worker_killed", f"api:{_}",
+                            detail={"worker": worker_id, "pid": w["pid"]})
+        return {"worker": worker_id, "pid": w["pid"], "held_job": w["current_job"], **r.json()}
+    # @learn:end kill-endpoint
+
+    @app.get("/integrations")
+    def integrations(_: str = Depends(owner), conn=Depends(db)):
+        return RateLimiter(conn).snapshot()
 
     @app.get("/cache")
     def cache_state(_: str = Depends(owner)):

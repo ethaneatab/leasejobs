@@ -11,7 +11,7 @@ from typing import Any
 
 import psycopg
 
-from . import store
+from . import metrics, store
 from .config import sabotage
 from .db import Jsonb
 from .states import State, check
@@ -177,6 +177,7 @@ class LeaseManager:
         if row is None:
             self.record_stale(job, "finish", attempted=to.value)
             return None
+        metrics.ATTEMPTS.labels(job["type"], outcome).inc()
         self.conn.execute(
             "UPDATE job_attempts SET finished_at = now(), outcome = %s, error = %s "
             "WHERE job_id = %s AND attempt_no = %s",
@@ -187,6 +188,7 @@ class LeaseManager:
 
     def record_stale(self, job: dict, op: str, **extra) -> None:
         """A fenced write bounced. Write down who tried and who holds the job now."""
+        metrics.STALE_REJECTED.labels(op).inc()
         now = self.conn.execute("SELECT state, lease_owner, fencing_token FROM jobs WHERE id = %s",
                                 (job["id"],)).fetchone()
         store.add_event(self.conn, job["id"], "stale_write_rejected", self.worker_id,

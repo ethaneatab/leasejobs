@@ -14,6 +14,7 @@ from leasejobs.seed import seed
 
 ADMIN_DSN = os.environ.get("LEASEJOBS_DSN", "postgresql://leasejobs:leasejobs-dev@127.0.0.1:54311/leasejobs")
 TEST_DSN = os.environ.get("LEASEJOBS_TEST_DSN", ADMIN_DSN.rsplit("/", 1)[0] + "/leasejobs_test")
+ROOT_DIR = __import__('pathlib').Path(__file__).resolve().parent.parent
 KEEP = {"schema_migrations", "job_transitions"}
 
 
