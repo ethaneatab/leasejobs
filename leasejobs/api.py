@@ -4,16 +4,19 @@ from __future__ import annotations
 import hashlib
 import os
 from contextlib import asynccontextmanager
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from . import jobs as jobtypes
 from . import store
+from .cron import Cron
+from .schedules import step_fn
 from .config import settings
 from .db import Jsonb
 from .logs import JsonLog
@@ -30,6 +33,42 @@ class JobIn(BaseModel):
     max_attempts: int = Field(3, ge=1, le=20)
     timeout_s: float = Field(30, gt=0, le=3600)
     idempotency_key: str | None = Field(None, min_length=1, max_length=200)
+    delay_s: float | None = Field(None, ge=0, le=30 * 86400, description="run no earlier than now + delay_s")
+    run_at: datetime | None = Field(None, description="run no earlier than this time (with timezone)")
+
+    @model_validator(mode="after")
+    def _one_time(self):
+        if self.delay_s is not None and self.run_at is not None:
+            raise ValueError("give delay_s or run_at, not both")
+        if self.run_at is not None and self.run_at.tzinfo is None:
+            raise ValueError("run_at needs a timezone, e.g. 2026-01-01T09:00:00Z")
+        return self
+
+
+class ScheduleJob(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    max_attempts: int = Field(3, ge=1, le=20)
+    timeout_s: float = Field(30, gt=0, le=3600)
+
+
+class ScheduleIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=100)
+    cron: str | None = None
+    every_s: float | None = Field(None, ge=1, le=30 * 86400)
+    job: ScheduleJob
+    misfire: Literal["skip", "catch_up"] = "skip"
+    max_catchup: int = Field(10, ge=1, le=1000)
+
+    @model_validator(mode="after")
+    def _exactly_one(self):
+        if (self.cron is None) == (self.every_s is None):
+            raise ValueError("give exactly one of cron or every_s")
+        if self.cron is not None:
+            Cron.parse(self.cron)  # ValueError -> 422 with the parser's message
+        return self
 
 
 def hash_key(key: str) -> str:
@@ -88,12 +127,21 @@ def create_app(dsn: str | None = None) -> FastAPI:
                                (who, body.idempotency_key)).fetchone()
             if old is not None:
                 return JSONResponse(status_code=200, content=_jsonable(old))
+        # Delayed jobs start in SCHEDULED; a trigger NOTIFYs the scheduler on commit.
+        if body.delay_s:
+            when, state = "now() + make_interval(secs => %s)", "SCHEDULED"
+            when_arg: Any = body.delay_s
+        elif body.run_at is not None:
+            when, when_arg = "greatest(now(), %s::timestamptz)", body.run_at
+            state = "SCHEDULED" if body.run_at > datetime.now(timezone.utc) else "PENDING"
+        else:
+            when, when_arg, state = "now() + make_interval(secs => %s)", 0, "PENDING"
         with conn.transaction():
             row = conn.execute(
-                "INSERT INTO jobs (owner, type, payload, state, priority, max_attempts, timeout_s, idempotency_key) "
-                "VALUES (%s,%s,%s,'PENDING',%s,%s,%s,%s) ON CONFLICT (owner, idempotency_key) DO NOTHING RETURNING *",
-                (who, body.type, Jsonb(payload), body.priority, body.max_attempts, body.timeout_s,
-                 body.idempotency_key),
+                "INSERT INTO jobs (owner, type, payload, state, priority, max_attempts, timeout_s, idempotency_key, run_at) "
+                f"VALUES (%s,%s,%s,%s,%s,%s,%s,%s,{when}) ON CONFLICT (owner, idempotency_key) DO NOTHING RETURNING *",
+                (who, body.type, Jsonb(payload), state, body.priority, body.max_attempts, body.timeout_s,
+                 body.idempotency_key, when_arg),
             ).fetchone()
             if row is None:  # lost an idempotency race to a concurrent identical submit
                 row = conn.execute("SELECT * FROM jobs WHERE owner = %s AND idempotency_key = %s",
@@ -144,6 +192,40 @@ def create_app(dsn: str | None = None) -> FastAPI:
         conn.execute("UPDATE jobs SET cancel_requested = true WHERE id = %s", (job_id,))
         store.add_event(conn, job_id, "cancel_requested", f"api:{who}")
         return JSONResponse(status_code=202, content=_jsonable(store.get_job(conn, job_id)))
+
+    @app.post("/schedules", status_code=201)
+    def create_schedule(body: ScheduleIn, who: str = Depends(owner), conn=Depends(db)):
+        if body.job.type not in jobtypes.Job.registry:
+            raise HTTPException(422, f"unknown job type {body.job.type!r}")
+        payload = jobtypes.Job.registry[body.job.type].validate(body.job.payload)
+        first = step_fn(body.cron, body.every_s)(conn.execute("SELECT now() AS t").fetchone()["t"])
+        row = conn.execute(
+            """INSERT INTO schedules (owner, name, cron, every_s, job_type, payload, max_attempts, timeout_s,
+                   misfire, max_catchup, next_run_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (owner, name) DO NOTHING RETURNING *""",
+            (who, body.name, body.cron, body.every_s, body.job.type, Jsonb(payload), body.job.max_attempts,
+             body.job.timeout_s, body.misfire, body.max_catchup, first)).fetchone()
+        if row is None:
+            raise HTTPException(409, f"schedule {body.name!r} already exists")
+        return row
+
+    @app.get("/schedules")
+    def list_schedules(who: str = Depends(owner), conn=Depends(db)):
+        return conn.execute("SELECT * FROM schedules WHERE owner = %s ORDER BY id", (who,)).fetchall()
+
+    @app.delete("/schedules/{schedule_id}")
+    def disable_schedule(schedule_id: int, who: str = Depends(owner), conn=Depends(db)):
+        row = conn.execute("UPDATE schedules SET enabled = false WHERE id = %s AND owner = %s RETURNING *",
+                           (schedule_id, who)).fetchone()
+        if row is None:
+            raise HTTPException(404, f"schedule {schedule_id} not found")
+        return row
+
+    @app.get("/scheduler")
+    def scheduler_state(_: str = Depends(owner), conn=Depends(db)):
+        row = conn.execute("SELECT *, extract(epoch FROM now() - updated_at) AS age_s FROM scheduler_state"
+                           ).fetchone()
+        return row or {"leader": None, "heap_size": 0, "top": [], "age_s": None}
 
     return app
 
