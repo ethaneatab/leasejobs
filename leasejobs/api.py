@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -17,8 +18,9 @@ from . import jobs as jobtypes
 from . import store
 from .cron import Cron
 from .schedules import step_fn
+from .cache import LRUCache
 from .config import settings
-from .db import Jsonb
+from .db import Jsonb, connect
 from .logs import JsonLog
 from .states import State, TERMINAL
 
@@ -79,14 +81,47 @@ def create_app(dsn: str | None = None) -> FastAPI:
     pool = ConnectionPool(dsn or settings().dsn, min_size=1, max_size=8, open=False,
                           kwargs={"autocommit": True, "row_factory": dict_row})
 
+    cache: LRUCache[int, dict] = LRUCache(int(os.environ.get("LEASEJOBS_CACHE_SIZE", "256")))
+    stop = threading.Event()
+    listening = threading.Event()
+
+    # @learn:cache-warm
+    def warm_cache_forever() -> None:
+        """LISTEN for finished jobs and put their (immutable) results in the cache."""
+        while not stop.is_set():
+            try:
+                with connect(dsn) as lc:
+                    lc.execute("LISTEN leasejobs_succeeded")
+                    listening.set()
+                    while not stop.is_set():
+                        # Drain first: querying while notifies() is still iterating would wait on
+                        # the connection lock that the generator itself holds.
+                        ids = [int(n.payload) for n in lc.notifies(timeout=0.5, stop_after=1)]
+                        for jid in ids:
+                            row = lc.execute("SELECT id, owner, result, finished_at FROM jobs WHERE id = %s",
+                                             (jid,)).fetchone()
+                            if row is not None:
+                                cache.put(row["id"], _result_view(row), source="notify")
+            except Exception as exc:  # reconnect; a cold cache is slower, never wrong
+                listening.clear()
+                log.warn("cache listener reconnecting", error=repr(exc))
+                stop.wait(1.0)
+    # @learn:end cache-warm
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         pool.open(wait=True, timeout=15)
+        t = threading.Thread(target=warm_cache_forever, name="cache-warm", daemon=True)
+        t.start()
         yield
+        stop.set()
+        t.join(2)
         pool.close()
 
     app = FastAPI(title="leasejobs", version="0.1.0", lifespan=lifespan)
     app.state.pool = pool
+    app.state.cache = cache
+    app.state.cache_listening = listening
 
     def db():
         with pool.connection() as conn:
@@ -177,6 +212,27 @@ def create_app(dsn: str | None = None) -> FastAPI:
         _own(job_id, who, conn)
         return store.events(conn, job_id)
 
+    # @learn:result-endpoint
+    @app.get("/jobs/{job_id}/result")
+    def get_result(job_id: int, response: Response, who: str = Depends(owner), conn=Depends(db)):
+        """Results are immutable once SUCCEEDED, so caching them needs no invalidation."""
+        hit = cache.get(job_id)
+        if hit is not None and hit["owner"] == who:
+            response.headers["X-Cache"] = "HIT"
+            return hit
+        job = _own(job_id, who, conn)  # a cached row of someone else's job still 404s
+        if job["state"] != "SUCCEEDED":
+            raise HTTPException(409, f"job {job_id} is {job['state']}, no result yet")
+        view = _result_view(job)
+        cache.put(job_id, view, source="read-through")
+        response.headers["X-Cache"] = "MISS"
+        return view
+    # @learn:end result-endpoint
+
+    @app.get("/cache")
+    def cache_state(_: str = Depends(owner)):
+        return {**cache.stats(), "keys_mru": cache.keys_mru()[:20], "recent": list(cache.recent)[-15:]}
+
     @app.post("/jobs/{job_id}/cancel")
     def cancel(job_id: int, who: str = Depends(owner), conn=Depends(db)):
         job = _own(job_id, who, conn)
@@ -228,6 +284,11 @@ def create_app(dsn: str | None = None) -> FastAPI:
         return row or {"leader": None, "heap_size": 0, "top": [], "age_s": None}
 
     return app
+
+
+def _result_view(row: dict) -> dict:
+    return {"job_id": row["id"], "owner": row["owner"], "result": row["result"],
+            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None}
 
 
 def _jsonable(row: dict) -> dict:
