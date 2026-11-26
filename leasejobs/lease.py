@@ -130,6 +130,21 @@ class LeaseManager:
         return reaped
     # @learn:end reap
 
+    # @learn:defer
+    def defer(self, job: dict, wait_s: float, why: dict) -> dict | None:
+        """LEASED -> SCHEDULED: give the job back to the scheduler instead of waiting.
+
+        Not an attempt (attempts is only bumped on start), and the lease is
+        dropped, so the worker is free for other jobs right away.
+        """
+        where, params = self.fence(job)
+        return store.transition(
+            self.conn, job["id"], State.LEASED, State.SCHEDULED, actor=self.worker_id, kind="rate_limited",
+            set_={"run_at": store.Raw(f"now() + make_interval(secs => {float(wait_s):.3f})"),
+                  "lease_owner": None, "lease_expires_at": None, "deferrals": store.Raw("deferrals + 1")},
+            guard=(where, params), detail={"wait_s": round(wait_s, 3), **why})
+    # @learn:end defer
+
     def start(self, job: dict) -> dict | None:
         where, params = self.fence(job)
         row = store.transition(self.conn, job["id"], State.LEASED, State.RUNNING, actor=self.worker_id,

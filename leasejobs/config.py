@@ -15,12 +15,12 @@ def sabotage() -> frozenset[str]:
     """Protections switched off on purpose, e.g. LEASEJOBS_LAB_SABOTAGE=no_fencing.
 
     Read on every call so a test can flip it for one subprocess. Known values:
-    no_reclaim, no_fencing, no_skip_locked. Anything else is rejected loudly so a
+    no_reclaim, no_fencing, no_skip_locked, no_ratelimit. Anything else is rejected loudly so a
     typo can't silently leave the protection on and fake a green control run.
     """
     raw = os.environ.get("LEASEJOBS_LAB_SABOTAGE", "")
     names = frozenset(p.strip() for p in raw.split(",") if p.strip())
-    unknown = names - {"no_reclaim", "no_fencing", "no_skip_locked"}
+    unknown = names - {"no_reclaim", "no_fencing", "no_skip_locked", "no_ratelimit"}
     if unknown:
         raise RuntimeError(f"unknown LEASEJOBS_LAB_SABOTAGE values: {sorted(unknown)}")
     return names

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import signal
 import socket
 import subprocess
@@ -24,6 +25,7 @@ from .config import settings
 from .db import connect
 from .lease import LeaseLost, LeaseManager
 from .logs import JsonLog
+from .ratelimit import RateLimiter
 from .states import State
 
 
@@ -80,6 +82,7 @@ class Worker:
         self.port = port
         self.conn = connect(dsn)
         self.leases = LeaseManager(self.conn, self.worker_id, self.cfg.lease_ttl_s)
+        self.limiter = RateLimiter(self.conn)
         self.log = JsonLog("worker", worker=self.worker_id)
         self.stop = threading.Event()
         self.current: JobContext | None = None
@@ -147,7 +150,35 @@ class Worker:
             freeze_self(float(fp["freeze_s"]))
             self.log.warn("resumed after SIGSTOP", job_id=job["id"])
 
+    # @learn:worker-token
+    def acquire_token(self, job: dict) -> bool:
+        """True if the job may run now; otherwise it has been handed back to the scheduler."""
+        try:
+            name = jobtypes.build(job["type"], job["payload"]).integration()
+        except ValueError:
+            return True  # a bad payload fails in run(), with a proper attempt record
+        if not name:
+            return True
+        g = self.limiter.try_acquire(name)
+        if g.ok:
+            store.add_event(self.conn, job["id"], "rate_token", self.worker_id,
+                            detail={"integration": name, "tokens_left": g.tokens_left, "capacity": g.capacity})
+            return True
+        # Everyone who was refused gets the same "one token in X s" hint. If they all
+        # came back at X, one would win and the rest would bounce again. So spread
+        # them over the time the bucket needs to serve the jobs already waiting.
+        waiting = self.conn.execute(
+            "SELECT count(*) AS n FROM jobs WHERE state = 'SCHEDULED' AND deferrals > 0 "
+            "AND payload->>'integration' = %s", (name,)).fetchone()["n"]
+        wait = g.wait_s + random.uniform(0, (waiting + 1) / g.refill_per_s)
+        self.leases.defer(job, wait, {"integration": name, "tokens_left": g.tokens_left, "queued_behind": waiting})
+        self.log.info("rate limited, deferred", job_id=job["id"], integration=name, wait_s=round(wait, 3))
+        return False
+    # @learn:end worker-token
+
     def execute(self, job: dict) -> None:
+        if not self.acquire_token(job):
+            return
         job = self.leases.start(job)
         if job is None:
             return

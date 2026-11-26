@@ -1,0 +1,15 @@
+# tests/test_ratelimit.py::test_shared_bucket_holds_the_global_rate_across_three_workers
+# 16 call_integration jobs, bucket capacity 3, refill 2/s, 3 worker processes + scheduler.
+# Lower bound for the run: (16 - 3) / 2 = 6.5 s. Local colima Postgres, 3 runs each.
+
+before (jitter 0-20% on the "one token" hint):
+16 calls over 6.49s; worst excess over the bucket bound 0.25; 91 deferrals
+16 calls over 6.57s; worst excess over the bucket bound 0.00; 91 deferrals
+16 calls over 6.54s; worst excess over the bucket bound 0.05; 91 deferrals
+
+after (spread over (queued + 1) / refill seconds):
+16 calls over 6.85s; worst excess over the bucket bound 0.03; 20 deferrals
+16 calls over 7.00s; worst excess over the bucket bound -0.01; 24 deferrals
+16 calls over 6.96s; worst excess over the bucket bound -0.00; 22 deferrals
+
+median: deferrals 91 -> 22, wall time 6.54 s -> 6.96 s.

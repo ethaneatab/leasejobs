@@ -35,4 +35,7 @@ run "fencing token (in-process stale write)" no_fencing red   "$STALE"
 run "fencing token (in-process stale write)" ""         green "$STALE"
 run "fencing token (SIGSTOP + revive, downstream)" no_fencing red   "$STOP"
 run "fencing token (SIGSTOP + revive, downstream)" ""         green "$STOP"
+RATE=tests/test_ratelimit.py::test_shared_bucket_holds_the_global_rate_across_three_workers
+run "shared token bucket (global rate)" no_ratelimit red   "$RATE"
+run "shared token bucket (global rate)" ""           green "$RATE"
 exit $status

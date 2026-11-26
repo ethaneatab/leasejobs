@@ -42,10 +42,10 @@ class Ledger:
         return self.keys.setdefault(key, {"max_token": None, "accepted": [], "rejected": [], "current": None})
 
     # @learn:integration-fence
-    def write(self, key: str, token: int | None, body: dict) -> tuple[int, dict]:
+    def write(self, key: str, token: int | None, body: dict, integration: str = "") -> tuple[int, dict]:
         with self.lock:
             k = self._key(key)
-            entry = {"token": token, "at": round(time.time(), 3), **body}
+            entry = {"token": token, "at": round(time.time(), 3), "integration": integration, **body}
             if token is not None and k["max_token"] is not None and token < k["max_token"]:
                 k["rejected"].append(entry)
                 return 409, {"error": "stale fencing token", "got": token, "max_seen": k["max_token"]}
@@ -125,7 +125,7 @@ class Handler(BaseHTTPRequestHandler):
                 REQS.labels(integration, "injected_400").inc()
                 return self._send(400, {"error": "injected permanent rejection"})
             raw = self.headers.get("x-fencing-token")
-            code, resp = LEDGER.write(key, int(raw) if raw is not None else None, body)
+            code, resp = LEDGER.write(key, int(raw) if raw is not None else None, body, integration)
             REQS.labels(integration, "accepted" if code == 200 else "stale_token").inc()
             return self._send(code, resp)
         return self._send(404, {"error": "not found"})
