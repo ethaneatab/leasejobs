@@ -1,0 +1,187 @@
+{
+  "backoff-driver": {
+    "path": "tests/test_failures.py",
+    "start": 18,
+    "end": 25
+  },
+  "bucket": {
+    "path": "leasejobs/ratelimit.py",
+    "start": 45,
+    "end": 64
+  },
+  "cache-warm": {
+    "path": "leasejobs/api.py",
+    "start": 94,
+    "end": 113
+  },
+  "call-integration": {
+    "path": "leasejobs/jobs.py",
+    "start": 172,
+    "end": 190
+  },
+  "claim": {
+    "path": "leasejobs/lease.py",
+    "start": 31,
+    "end": 59
+  },
+  "cron-next": {
+    "path": "leasejobs/cron.py",
+    "start": 70,
+    "end": 82
+  },
+  "defer": {
+    "path": "leasejobs/lease.py",
+    "start": 138,
+    "end": 149
+  },
+  "fence": {
+    "path": "leasejobs/lease.py",
+    "start": 63,
+    "end": 71
+  },
+  "finish": {
+    "path": "leasejobs/lease.py",
+    "start": 167,
+    "end": 190
+  },
+  "fire": {
+    "path": "leasejobs/scheduler.py",
+    "start": 114,
+    "end": 150
+  },
+  "freeze": {
+    "path": "leasejobs/worker.py",
+    "start": 79,
+    "end": 84
+  },
+  "hard-timeout": {
+    "path": "leasejobs/worker.py",
+    "start": 230,
+    "end": 256
+  },
+  "heap-push": {
+    "path": "leasejobs/heap.py",
+    "start": 32,
+    "end": 44
+  },
+  "heartbeat": {
+    "path": "leasejobs/lease.py",
+    "start": 75,
+    "end": 90
+  },
+  "integration-fence": {
+    "path": "leasejobs/integration.py",
+    "start": 45,
+    "end": 56
+  },
+  "kill-endpoint": {
+    "path": "leasejobs/api.py",
+    "start": 256,
+    "end": 270
+  },
+  "lab-no-fencing": {
+    "path": "leasejobs/lease.py",
+    "start": 66,
+    "end": 69
+  },
+  "lab-no-reclaim": {
+    "path": "leasejobs/lease.py",
+    "start": 104,
+    "end": 105
+  },
+  "legacy-backoff-driver": {
+    "path": "docs/problems/snippets/backoff_test_before.py",
+    "start": 3,
+    "end": 8
+  },
+  "legacy-defer": {
+    "path": "docs/problems/snippets/defer_stampede_before.py",
+    "start": 4,
+    "end": 8
+  },
+  "legacy-infinity": {
+    "path": "docs/problems/snippets/infinity_json_before.py",
+    "start": 4,
+    "end": 8
+  },
+  "legacy-misfire": {
+    "path": "docs/problems/snippets/misfire_before.py",
+    "start": 4,
+    "end": 9
+  },
+  "legacy-notify-loop": {
+    "path": "docs/problems/snippets/notify_deadlock_before.py",
+    "start": 4,
+    "end": 11
+  },
+  "legacy-run-inline": {
+    "path": "docs/problems/snippets/run_inline_before.py",
+    "start": 4,
+    "end": 9
+  },
+  "lru-core": {
+    "path": "leasejobs/cache.py",
+    "start": 42,
+    "end": 80
+  },
+  "misfire": {
+    "path": "leasejobs/schedules.py",
+    "start": 31,
+    "end": 46
+  },
+  "on-failure": {
+    "path": "leasejobs/worker.py",
+    "start": 260,
+    "end": 281
+  },
+  "reap": {
+    "path": "leasejobs/lease.py",
+    "start": 94,
+    "end": 134
+  },
+  "release": {
+    "path": "leasejobs/scheduler.py",
+    "start": 100,
+    "end": 110
+  },
+  "result-endpoint": {
+    "path": "leasejobs/api.py",
+    "start": 221,
+    "end": 234
+  },
+  "sched-push": {
+    "path": "leasejobs/scheduler.py",
+    "start": 73,
+    "end": 83
+  },
+  "sql-notify": {
+    "path": "sql/004_scheduler.sql",
+    "start": 37,
+    "end": 53
+  },
+  "sql-transitions": {
+    "path": "sql/001_core.sql",
+    "start": 62,
+    "end": 90
+  },
+  "stalled-sql": {
+    "path": "leasejobs/metrics.py",
+    "start": 29,
+    "end": 42
+  },
+  "state-machine": {
+    "path": "leasejobs/states.py",
+    "start": 27,
+    "end": 55
+  },
+  "transition": {
+    "path": "leasejobs/store.py",
+    "start": 31,
+    "end": 52
+  },
+  "worker-token": {
+    "path": "leasejobs/worker.py",
+    "start": 167,
+    "end": 190
+  }
+}

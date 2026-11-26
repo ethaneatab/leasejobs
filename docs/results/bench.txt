@@ -1,0 +1,14 @@
+# leasejobs bench, median of 5 runs; 2026-11-25 19:23; python 3.11.9
+# Postgres 16 in colima (4 vCPU / 6 GiB shared with other projects); workers on the host.
+
+claim+run noop jobs, 1 worker(s), SKIP LOCKED: median 75 jobs/s (min 69, max 93); 0 duplicate attempts
+claim+run noop jobs, 4 worker(s), SKIP LOCKED: median 285 jobs/s (min 257, max 348); 0 duplicate attempts
+claim+run noop jobs, 8 worker(s), SKIP LOCKED: median 478 jobs/s (min 373, max 596); 0 duplicate attempts
+claim+run noop jobs, 1 worker(s), plain FOR UPDATE (no_skip_locked): median 85 jobs/s (min 78, max 123); 0 duplicate attempts
+claim+run noop jobs, 4 worker(s), plain FOR UPDATE (no_skip_locked): median 293 jobs/s (min 275, max 350); 0 duplicate attempts
+claim+run noop jobs, 8 worker(s), plain FOR UPDATE (no_skip_locked): median 332 jobs/s (min 311, max 533); 0 duplicate attempts
+
+kill -9 recovery (lease ttl 4 s, heartbeat 1 s, 2 s job): kill -> reclaimed median 3.59 s (min 3.57, max 3.60); kill -> SUCCEEDED median 5.61 s
+
+LRU get+put at   1000 entries: ours 567 ns/op, OrderedDict version 143 ns/op
+LRU get+put at 100000 entries: ours 699 ns/op, OrderedDict version 290 ns/op

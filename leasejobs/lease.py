@@ -62,10 +62,12 @@ class LeaseManager:
     # @learn:fence
     def fence(self, job: dict) -> tuple[str, tuple]:
         """The guard every write about a held job carries."""
+        # @learn:lab-no-fencing
         if "no_fencing" in sabotage():
             # LAB: trust whoever shows up. A worker that was presumed dead can
             # come back and overwrite the result of the worker that replaced it.
             return "TRUE", ()
+        # @learn:end lab-no-fencing
         return "lease_owner = %s AND fencing_token = %s", (self.worker_id, job["fencing_token"])
     # @learn:end fence
 
@@ -98,8 +100,10 @@ class LeaseManager:
         harmless. A job that expired on its last allowed attempt is failed for
         good instead of being retried forever.
         """
+        # @learn:lab-no-reclaim
         if "no_reclaim" in sabotage():
             return []  # LAB: nobody ever takes an expired lease back
+        # @learn:end lab-no-reclaim
         reaped = []
         with self.conn.transaction():
             rows = self.conn.execute(

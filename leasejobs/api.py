@@ -21,7 +21,7 @@ from . import store
 from .cron import Cron
 from .schedules import step_fn
 from .cache import LRUCache
-from . import metrics
+from . import learn, metrics
 from .metrics import QueueCollector
 from .ratelimit import RateLimiter
 from .config import settings
@@ -273,6 +273,8 @@ def create_app(dsn: str | None = None) -> FastAPI:
     @app.get("/integrations")
     def integrations(_: str = Depends(owner), conn=Depends(db)):
         return RateLimiter(conn).snapshot()
+
+    app.include_router(learn.router(db, owner, cache))
 
     @app.get("/cache")
     def cache_state(_: str = Depends(owner)):

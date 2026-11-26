@@ -14,6 +14,7 @@ def drive(conn, dsn, jid, max_rounds=10):
     """Run worker + scheduler by hand until the job is terminal. Backoff is
     skipped by pulling run_at to now before each scheduler tick."""
     w, s = Worker("w-f", dsn), Scheduler(dsn, "s-f")
+    # @learn:backoff-driver
     for _ in range(max_rounds):
         w.run_once()
         state = store.get_job(conn, jid)["state"]
@@ -22,6 +23,7 @@ def drive(conn, dsn, jid, max_rounds=10):
         conn.execute("UPDATE jobs SET run_at = now() WHERE id = %s AND state = 'SCHEDULED'", (jid,))
         s.resync()
         s.tick()
+    # @learn:end backoff-driver
     raise AssertionError(f"job {jid} not terminal: {store.get_job(conn, jid)['state']}")
 
 

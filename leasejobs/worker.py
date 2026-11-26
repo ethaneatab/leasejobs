@@ -75,12 +75,14 @@ class JobContext:
             time.sleep(min(0.05, left))
 
 
+# @learn:freeze
 def freeze_self(seconds: float) -> None:
     """Stop this whole process (every thread) for `seconds`, like a long GC pause
     or a VM stall. A detached shell sends SIGCONT to our own PID afterwards."""
     pid = os.getpid()
     subprocess.Popen(["/bin/sh", "-c", f"sleep {float(seconds)}; kill -CONT {pid}"], start_new_session=True)
     os.kill(pid, signal.SIGSTOP)
+# @learn:end freeze
 
 
 class Worker:
@@ -286,7 +288,13 @@ class Worker:
         idle_since = time.monotonic()
         try:
             while not self.stop.is_set():
-                if self.run_once():
+                try:
+                    worked = self.run_once()
+                except Exception as exc:  # keep the loop alive; a held job comes back via lease expiry
+                    self.log.error("loop error", error=repr(exc))
+                    self.stop.wait(1.0)
+                    continue
+                if worked:
                     idle_since = time.monotonic()
                 elif drain_after_s is not None and time.monotonic() - idle_since > drain_after_s:
                     self.log.info("drained, exiting")

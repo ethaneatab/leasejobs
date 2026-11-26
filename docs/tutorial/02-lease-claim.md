@@ -64,16 +64,28 @@ RETURNING *
 
 ## SKIP LOCKED 快多少？
 
-实测：没有快。把它换成普通的 `FOR UPDATE`（开关 `LEASEJOBS_LAB_SABOTAGE=no_skip_locked`），同一个测试跑三次：
+先看这一章当时的粗测：把它换成普通的 `FOR UPDATE`（开关 `LEASEJOBS_LAB_SABOTAGE=no_skip_locked`），上面那个四进程测试各跑三次：
 
 ```
 SKIP LOCKED   3.01s  2.77s  3.28s
 FOR UPDATE    3.12s  3.01s  3.16s
 ```
 
-差别在噪音里。原因是这里每次认领的事务只有一条 UPDATE，锁只持有一两毫秒，排队的人等得很短。
-所以在这个仓库里，SKIP LOCKED 的价值是「不排队」这个性质，不是一个能写进 README 的提速数字。
-它会在认领事务变长的时候拉开差距（比如认领时还要读别的表）。这里没测，就不写数字。
+差别在噪音里。这个数字包含了进程启动和最后一秒的空闲，太粗。
+
+后来 `scripts/bench.py` 只量「第一次认领到最后一次完成」，两千个空任务，每档五次取中位数（`docs/results/bench.txt`）：
+
+```
+            1 worker   4 workers   8 workers
+SKIP LOCKED   75/s       285/s       478/s
+FOR UPDATE    85/s       293/s       332/s
+```
+
+一个和四个 worker 时没有差别：认领事务只有一条 UPDATE，锁只持有一两毫秒，排队的人等得很短。
+到八个 worker 才拉开：普通 `FOR UPDATE` 下，大家挤在队头那一行，被阻塞的人等锁释放以后重新检查条件，发现这一行已经不是 PENDING，就返回空，白跑一轮。
+两种方式都没有出现重复尝试，所以 SKIP LOCKED 在这里是**吞吐**问题，不是正确性问题。
+
+这些吞吐数字是空任务的协调开销上限（每个任务大约六条语句加事件），在一台和别的项目共用 colima 的笔记本上测的，只用来做同机对比。
 
 ## 怎么 checkout 到这一步跑起来
 
