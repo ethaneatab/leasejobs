@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import random
 import statistics
+import time
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
@@ -82,6 +83,21 @@ class Sleep(Job):
     def run(self, ctx):
         ctx.sleep(float(self.payload.get("seconds", 1)))
         return {"slept_s": self.payload.get("seconds", 1)}
+
+
+class Block(Job):
+    """A badly behaved job: blocks without ever calling ctx.check().
+    Exists to test that the worker's deadline does not depend on the job's manners."""
+    type_name = "block"
+
+    @classmethod
+    def validate(cls, payload):
+        _num(payload, "seconds", 1, 0, 60)
+        return payload
+
+    def run(self, ctx):
+        time.sleep(float(self.payload.get("seconds", 1)))
+        return {"blocked_s": self.payload.get("seconds", 1)}
 
 
 class BuildReport(Job):

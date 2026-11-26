@@ -29,6 +29,17 @@ from .ratelimit import RateLimiter
 from .states import State
 
 
+HARD_TIMEOUT_GRACE_S = 0.5
+
+
+def backoff_s(attempt: int) -> float:
+    """Exponential backoff with 'equal jitter': half fixed, half random."""
+    base = float(os.environ.get("LEASEJOBS_RETRY_BASE_S", "1.0"))
+    cap = float(os.environ.get("LEASEJOBS_RETRY_CAP_S", "60"))
+    d = min(cap, base * 2 ** (attempt - 1))
+    return d / 2 + random.uniform(0, d / 2)
+
+
 class AttemptTimeout(Exception):
     pass
 
@@ -187,7 +198,7 @@ class Worker:
         try:
             self._failpoint(job, "after_start")
             try:
-                result = jobtypes.build(job["type"], job["payload"]).run(ctx)
+                result = self.run_with_deadline(job, ctx)
             except LeaseLost:
                 self.log.warn("abandoning job: lease lost", job_id=job["id"])
                 return
@@ -210,9 +221,60 @@ class Worker:
         finally:
             self.current = None
 
+    # @learn:hard-timeout
+    def run_with_deadline(self, job: dict, ctx: JobContext) -> dict:
+        """Run the job body in its own thread and stop waiting at the deadline.
+
+        Well-behaved jobs call ctx.check()/ctx.sleep() and stop by themselves.
+        A job that blocks without checking can't be killed (Python threads can't
+        be), so we abandon it: mark it lost, record the timeout, move on. Its
+        late writes carry an old fencing token, so they bounce like any stale
+        worker's would.
+        """
+        box: dict = {}
+
+        def body():
+            try:
+                box["result"] = jobtypes.build(job["type"], job["payload"]).run(ctx)
+            except BaseException as exc:  # handed to the caller below
+                box["error"] = exc
+
+        t = threading.Thread(target=body, name=f"job-{job['id']}", daemon=True)
+        t.start()
+        t.join(max(0.0, ctx.deadline - time.monotonic()) + HARD_TIMEOUT_GRACE_S)
+        if t.is_alive():
+            ctx.lease_lost.set()  # any later ctx.check() in that thread stops it
+            self.log.warn("abandoned a job thread that ignored its deadline", job_id=job["id"])
+            raise AttemptTimeout(f"attempt exceeded timeout_s={job['timeout_s']} (job did not stop; abandoned)")
+        if "error" in box:
+            raise box["error"]
+        return box["result"]
+    # @learn:end hard-timeout
+
+    # @learn:on-failure
     def on_failure(self, job: dict, exc: Exception) -> None:
-        self.leases.finish(job, State.FAILED_TERMINAL, error=str(exc), outcome="failed")
-        self.log.warn("failed", job_id=job["id"], error=str(exc))
+        """Decide: retry later, or stop for good. Timeouts and transient errors
+        retry while attempts remain; permanent errors never do."""
+        timed_out = isinstance(exc, AttemptTimeout)
+        retryable = timed_out or getattr(exc, "retryable", True) and not isinstance(exc, ValueError)
+        outcome = "timed_out" if timed_out else "failed"
+        err = f"{exc.__class__.__name__}: {exc}"
+        if retryable and job["attempts"] < job["max_attempts"]:
+            delay = backoff_s(job["attempts"])
+            with self.conn.transaction():  # both steps or neither: never stranded in FAILED_RETRYABLE
+                if self.leases.finish(job, State.FAILED_RETRYABLE, error=err, outcome=outcome) is None:
+                    return
+                store.transition(self.conn, job["id"], State.FAILED_RETRYABLE, State.SCHEDULED,
+                                 actor=self.worker_id, kind="retry_scheduled",
+                                 set_={"run_at": store.Raw(f"now() + make_interval(secs => {delay:.3f})")},
+                                 detail={"attempt": job["attempts"], "backoff_s": round(delay, 3)})
+            self.log.warn("attempt failed, retry scheduled", job_id=job["id"], attempt=job["attempts"],
+                          backoff_s=round(delay, 3), error=err)
+            return
+        final = State.TIMED_OUT if timed_out and retryable else State.FAILED_TERMINAL
+        self.leases.finish(job, final, error=err, outcome=outcome)
+        self.log.warn("job failed for good", job_id=job["id"], state=final.value, error=err)
+    # @learn:end on-failure
 
     def run_forever(self, drain_after_s: float | None = None) -> None:
         self.register()
