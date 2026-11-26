@@ -8,7 +8,6 @@ for name in web supervisor scheduler api integration; do
   [ -f "$f" ] || continue
   pid=$(cat "$f")
   if kill -0 "$pid" 2>/dev/null; then
-    if [ "$name" = web ]; then pkill -TERM -P "$pid" 2>/dev/null; fi   # vite runs under npm: its direct children only
     kill -TERM "$pid" 2>/dev/null
     for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
     kill -0 "$pid" 2>/dev/null && kill -KILL "$pid"

@@ -74,6 +74,35 @@ What is covered: the state machine (all 81 from/to pairs, the trigger, Python = 
 `LEASEJOBS_LAB_SABOTAGE` switches one protection off; the test that guards it must go red, and green again when it is back. Output of `./scripts/failing_controls.sh` (full file: [`docs/results/failing-controls.txt`](docs/results/failing-controls.txt)):
 
 <!-- failing-controls:start -->
+```
+=== lease reclaim (kill -9 recovery)  LEASEJOBS_LAB_SABOTAGE=no_reclaim  expect=red got=red  [OK]
+E       AssertionError: timed out after 15s waiting for another worker to reclaim and finish the job; saw {'state': 'RUNNING', 'lease_owner': 'w1', 'fencing_token': 1,...
+FAILED tests/test_recovery.py::test_kill9_worker_job_is_reclaimed_with_history_intact
+1 failed in 16.04s
+=== lease reclaim (kill -9 recovery)  LEASEJOBS_LAB_SABOTAGE=<none>  expect=green got=green  [OK]
+1 passed in 5.78s
+=== fencing token (in-process stale write)  LEASEJOBS_LAB_SABOTAGE=no_fencing  expect=red got=red  [OK]
+E       AssertionError: stale worker overwrote the result: {'by': 'w-a'}
+E       assert {'by': 'w-a'} == {'by': 'w-b'}
+FAILED tests/test_recovery.py::test_stale_holder_cannot_heartbeat_or_finish
+1 failed in 0.54s
+=== fencing token (in-process stale write)  LEASEJOBS_LAB_SABOTAGE=<none>  expect=green got=green  [OK]
+1 passed in 0.60s
+=== fencing token (SIGSTOP + revive, downstream)  LEASEJOBS_LAB_SABOTAGE=no_fencing  expect=red got=red  [OK]
+E       AssertionError: accepted writes: [{'token': None, 'at': 1795664965.135, 'integration': 'ledger-api', 'job_id': 1, 'attempt': 2, 'worker': 'w2', 'amount': 1}, {...
+E       assert ['w2', 'w1'] == ['w2']
+FAILED tests/test_recovery.py::test_sigstop_worker_revives_and_is_fenced_out
+1 failed in 4.29s
+=== fencing token (SIGSTOP + revive, downstream)  LEASEJOBS_LAB_SABOTAGE=<none>  expect=green got=green  [OK]
+1 passed in 4.28s
+=== shared token bucket (global rate)  LEASEJOBS_LAB_SABOTAGE=no_ratelimit  expect=red got=red  [OK]
+E       AssertionError: more calls than the bucket allows
+E       assert 12.732000350952148 <= 1.0
+FAILED tests/test_ratelimit.py::test_shared_bucket_holds_the_global_rate_across_three_workers
+1 failed in 2.39s
+=== shared token bucket (global rate)  LEASEJOBS_LAB_SABOTAGE=<none>  expect=green got=green  [OK]
+1 passed in 9.16s
+```
 <!-- failing-controls:end -->
 
 ## Measured numbers (this repo only)

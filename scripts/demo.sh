@@ -52,7 +52,8 @@ if [ -d frontend ] && [ -f frontend/package.json ]; then
   [ -d frontend/node_modules ] || (cd frontend && npm ci --silent)
   [ -d node_modules ] || npm ci --silent
   node scripts/learn_anchors.mjs >/dev/null
-  start web web.log npm --prefix frontend run dev -- --port 5191 --strictPort
+  # exec: the PID we record is vite itself, not an npm wrapper whose child would outlive it
+  start web web.log sh -c 'cd frontend && exec node node_modules/vite/bin/vite.js --port 5191 --strictPort'
   wait_http http://127.0.0.1:5191/ "web UI"
 fi
 
