@@ -4,7 +4,7 @@ A Python background-job service where Postgres leases decide who runs a job, fen
 
 ![learn mode preview](docs/learn-preview.gif)
 
-Walkthrough video (Chinese, split by chapter): [releases/learn-video](https://github.com/ethaneatab/leasejobs/releases/tag/learn-video) · Tutorial: [`docs/tutorial/`](docs/tutorial/) · Interview questions: [`docs/interview.md`](docs/interview.md) · Problems I hit and how I fixed them: [`docs/problems.md`](docs/problems.md)
+Walkthrough videos (Chinese, split by chapter, narration synthesized locally with TTS): [docs/videos/](docs/videos/README.md) · Tutorial: [`docs/tutorial/`](docs/tutorial/) · Interview questions: [`docs/interview.md`](docs/interview.md) · Problems I hit and how I fixed them: [`docs/problems.md`](docs/problems.md)
 
 ## What it does
 
